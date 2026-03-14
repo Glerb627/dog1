@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tactical Flight: Lethal Terrain</title>
+    <title>Tactical Flight: Pro Physics</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
         
@@ -11,37 +11,38 @@
         canvas { display: block; }
         
         #menu {
-            position: absolute; inset: 0; background: radial-gradient(circle, rgba(20,25,30,0.9) 0%, rgba(0,0,0,1) 100%);
+            position: absolute; inset: 0; background: radial-gradient(circle, rgba(15,20,25,0.95) 0%, rgba(0,0,0,1) 100%);
             display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 10;
         }
         
-        h1 { color: #fff; font-size: 4rem; margin: 0; letter-spacing: 5px; text-shadow: 0px 0px 10px #ffffff55; }
-        .subtitle { color: #8899aa; font-size: 1.2rem; margin-bottom: 40px; letter-spacing: 3px; }
+        h1 { color: #00ffcc; font-size: 4rem; margin: 0; letter-spacing: 5px; text-shadow: 0px 0px 15px rgba(0,255,204,0.5); }
+        .subtitle { color: #667788; font-size: 1.2rem; margin-bottom: 40px; letter-spacing: 3px; }
         
-        .briefing { border-left: 2px solid #fff; padding-left: 15px; color: #ccc; margin-bottom: 40px; max-width: 600px; font-size: 1.1rem; line-height: 1.5; }
-        .alert { color: #ff3333; font-weight: bold; }
+        .briefing { border-left: 2px solid #00ffcc; padding-left: 20px; color: #ddd; margin-bottom: 40px; max-width: 650px; font-size: 1.1rem; line-height: 1.6; background: rgba(0,255,204,0.05); padding-top: 10px; padding-bottom: 10px; }
+        .alert { color: #ff4444; font-weight: bold; }
         
         .btn {
-            padding: 15px 40px; background: transparent; color: #fff; border: 2px solid #fff;
+            padding: 15px 50px; background: transparent; color: #00ffcc; border: 2px solid #00ffcc;
             font-size: 1.5rem; font-family: inherit; cursor: pointer; text-transform: uppercase; letter-spacing: 3px;
             transition: all 0.2s;
         }
-        .btn:hover { background: #fff; color: #000; box-shadow: 0 0 20px #fff; }
+        .btn:hover { background: #00ffcc; color: #000; box-shadow: 0 0 25px #00ffcc; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
 
     <div id="menu">
-        <h1>TACTICAL FLIGHT</h1>
-        <div class="subtitle">F-SERIES PROTOTYPE TEST</div>
+        <h1>PROJECT: RAPTOR</h1>
+        <div class="subtitle">AERODYNAMIC PHYSICS ENGINE v3.0</div>
         <div class="briefing">
-            <p>> CONTROLS: <strong>WASD</strong> TO PITCH AND ROLL.</p>
-            <p>> THROTTLE: HOLD <strong>[SPACEBAR]</strong> TO IGNITE AFTERBURNERS.</p>
-            <p>> TAKEOFF: HOLD SPACE TO ACCELERATE. ONCE MOVING, HOLD <strong>[S]</strong> TO PULL UP.</p>
-            <p class="alert">> WARNING: TERRAIN COLLISION IS LETHAL. DO NOT HIT THE MOUNTAINS.</p>
+            <p>> <strong>CONTROLS:</strong> [W] Pitch Down | [S] Pitch Up | [A] Roll Left | [D] Roll Right</p>
+            <p>> <strong>THROTTLE:</strong> Hold [SPACE] to ignite twin afterburners.</p>
+            <p>> <strong>PHYSICS:</strong> This model has gravity and lift. If your speed drops below 150, you will stall and fall.</p>
+            <p>> <strong>TAKEOFF:</strong> Hold Space until speed > 200. Hold [S] to lift off safely.</p>
+            <p class="alert">> WARNING: TERRAIN COLLISION IS ACTIVE. AVOID THE MOUNTAINS.</p>
         </div>
-        <button class="btn" id="start-btn">Clear for Takeoff</button>
+        <button class="btn" id="start-btn">ENGAGE SYSTEMS</button>
     </div>
 
 <script>
@@ -54,124 +55,166 @@
         isPlaying = true;
     });
 
-    // --- Scene Setup (Stormy / High Contrast) ---
+    // --- Scene Setup ---
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x2b3a42); // Moody storm blue/grey
-    scene.fog = new THREE.FogExp2(0x2b3a42, 0.0004); // Blends terrain into sky
+    scene.background = new THREE.Color(0x1a2226); // Dawn blue
+    scene.fog = new THREE.FogExp2(0x1a2226, 0.00025); // Lighter fog so you can see the mountains
 
-    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 15000);
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 20000);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(renderer.domElement);
 
-    const ambientLight = new THREE.AmbientLight(0x405060, 1.2);
+    const ambientLight = new THREE.AmbientLight(0x506070, 1.2);
     scene.add(ambientLight);
-    const dirLight = new THREE.DirectionalLight(0xffeedd, 1.5);
-    dirLight.position.set(5000, 3000, -2000);
-    scene.add(dirLight);
+    const sunLight = new THREE.DirectionalLight(0xffddaa, 1.8);
+    sunLight.position.set(-5000, 3000, -5000);
+    scene.add(sunLight);
 
-    // --- Core Terrain Math (Used for both graphics AND lethal collision) ---
+    // --- Biome Terrain Generation ---
     function getTerrainElevation(x, z) {
-        // Create a massive flat runway canyon in the center
-        if (x > -150 && x < 150 && z < 1000 && z > -10000) return 0; 
+        // Massive runway safe zone (wider and longer)
+        if (x > -300 && x < 300 && z < 1500 && z > -15000) return 0; 
         
-        let distFromRunway = Math.max(0, Math.abs(x) - 150);
-        let mountainScale = Math.min(1, distFromRunway / 1000); // Rises sharply past the runway
+        let distFromRunway = Math.max(0, Math.abs(x) - 300);
+        let mountainScale = Math.min(1, distFromRunway / 1500); 
         
-        // Complex rolling math for mountain peaks
-        let height = (Math.sin(x/400)*500 + Math.cos(z/400)*500);
-        height += (Math.sin(x/100)*150 + Math.cos(z/100)*150); 
+        let height = (Math.sin(x/600)*800 + Math.cos(z/600)*800);
+        height += (Math.sin(x/200)*250 + Math.cos(z/200)*250); // Detail
+        height += (Math.sin(x/50)*50 + Math.cos(z/50)*50);     // Micro detail
         
         return Math.max(0, height * mountainScale);
     }
 
-    // --- Generate Mountain Mesh ---
-    const terrainGeo = new THREE.PlaneGeometry(20000, 20000, 150, 150);
+    const terrainGeo = new THREE.PlaneGeometry(30000, 30000, 250, 250);
     terrainGeo.rotateX(-Math.PI / 2);
+    
+    // Setup vertex colors for biomes
     const pos = terrainGeo.attributes.position;
+    const colors = [];
+    const colorObj = new THREE.Color();
+    
     for (let i = 0; i < pos.count; i++) {
         let x = pos.getX(i);
         let z = pos.getZ(i);
-        pos.setY(i, getTerrainElevation(x, z));
+        let y = getTerrainElevation(x, z);
+        pos.setY(i, y);
+        
+        // Color based on height (Biome shading)
+        if (y < 20) {
+            colorObj.setHex(0x1a2b1a); // Valley green
+        } else if (y < 600) {
+            colorObj.setHex(0x333b3d); // Rocky grey
+        } else {
+            colorObj.setHex(0xdddddd); // Snow peaks
+        }
+        colors.push(colorObj.r, colorObj.g, colorObj.b);
     }
+    terrainGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     terrainGeo.computeVertexNormals();
     
-    // Gritty, dark green/slate rocky material
-    const terrainMat = new THREE.MeshStandardMaterial({ color: 0x1c251c, roughness: 0.9, flatShading: true });
+    const terrainMat = new THREE.MeshStandardMaterial({ 
+        vertexColors: true, 
+        roughness: 0.9, 
+        flatShading: true 
+    });
     const terrain = new THREE.Mesh(terrainGeo, terrainMat);
     scene.add(terrain);
 
-    // Dark asphalt runway
-    const runwayGeo = new THREE.PlaneGeometry(120, 8000);
+    // Runway
+    const runwayGeo = new THREE.PlaneGeometry(150, 10000);
     runwayGeo.rotateX(-Math.PI / 2);
-    const runwayMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0c, roughness: 0.8 });
+    const runwayMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.8 });
     const runway = new THREE.Mesh(runwayGeo, runwayMat);
-    runway.position.set(0, 0.5, -3000); // Slightly above ground to prevent glitching
+    runway.position.set(0, 0.5, -4000); 
     scene.add(runway);
 
-    // --- F-Series Military Fighter Model ---
+    // --- Highly Detailed Stealth Fighter ---
     const plane = new THREE.Group();
-    const tacGrey = new THREE.MeshStandardMaterial({ color: 0x555560, roughness: 0.6, metalness: 0.4 });
-    const darkGlass = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.1, metalness: 0.9 });
+    const hullMat = new THREE.MeshStandardMaterial({ color: 0x44444a, roughness: 0.5, metalness: 0.5 });
+    const darkMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.8, metalness: 0.2 });
+    const glassMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.1, metalness: 0.9 });
 
-    // Fuselage (Sleeker)
-    const body = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1, 8), tacGrey);
+    // Main flat stealth fuselage
+    const body = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.8, 9), hullMat);
     plane.add(body);
 
-    // Sharp Nose
-    const nose = new THREE.Mesh(new THREE.ConeGeometry(0.75, 3.5, 4), tacGrey);
-    nose.rotation.x = -Math.PI / 2;
-    nose.rotation.z = Math.PI / 4; 
-    nose.position.set(0, 0, -5.75);
+    // Sharp angled nose
+    const noseGeo = new THREE.BufferGeometry();
+    const noseVerts = new Float32Array([
+        -1.25, 0.4, -4.5,   1.25, 0.4, -4.5,   0, 0, -8, // Top triangle
+        -1.25, -0.4, -4.5,  1.25, -0.4, -4.5,  0, 0, -8, // Bottom triangle
+        -1.25, 0.4, -4.5,  -1.25, -0.4, -4.5,  0, 0, -8, // Left triangle
+         1.25, 0.4, -4.5,   1.25, -0.4, -4.5,  0, 0, -8  // Right triangle
+    ]);
+    noseGeo.setAttribute('position', new THREE.BufferAttribute(noseVerts, 3));
+    noseGeo.computeVertexNormals();
+    const nose = new THREE.Mesh(noseGeo, hullMat);
     plane.add(nose);
 
-    // Canopy
-    const canopy = new THREE.Mesh(new THREE.BoxGeometry(1, 0.8, 3), darkGlass);
-    canopy.position.set(0, 0.7, -1.5);
-    plane.add(canopy);
-
-    // F-22 Style Swept Wings
-    const wingShape = new THREE.Shape();
-    wingShape.moveTo(0, 0);       // Root front
-    wingShape.lineTo(6, 2.5);     // Tip front (swept heavily back)
-    wingShape.lineTo(6, 4);       // Tip back
-    wingShape.lineTo(0, 4.5);     // Root back
+    // Side Intakes
+    const intakeL = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 3), darkMat);
+    intakeL.position.set(-1.6, 0, -1.5);
+    intakeL.rotation.y = 0.1;
+    plane.add(intakeL);
     
-    const wGeo = new THREE.ExtrudeGeometry(wingShape, { depth: 0.1, bevelEnabled: false });
-    const rWing = new THREE.Mesh(wGeo, tacGrey);
-    rWing.rotation.x = Math.PI / 2;
-    rWing.position.set(0.75, 0, -2);
+    const intakeR = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 3), darkMat);
+    intakeR.position.set(1.6, 0, -1.5);
+    intakeR.rotation.y = -0.1;
+    plane.add(intakeR);
+
+    // Twin Exhaust Nozzles
+    const exhaustGeo = new THREE.CylinderGeometry(0.5, 0.6, 1.5, 8);
+    exhaustGeo.rotateX(Math.PI / 2);
+    
+    const exhaustL = new THREE.Mesh(exhaustGeo, darkMat);
+    exhaustL.position.set(-0.7, 0, 4.5);
+    plane.add(exhaustL);
+    
+    const exhaustR = new THREE.Mesh(exhaustGeo, darkMat);
+    exhaustR.position.set(0.7, 0, 4.5);
+    plane.add(exhaustR);
+
+    // Multi-part Canopy
+    const canopyFront = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.8, 2.5), glassMat);
+    canopyFront.position.set(0, 0.6, -2);
+    canopyFront.rotation.x = 0.2;
+    plane.add(canopyFront);
+
+    // Stealth Delta Wings
+    const wingShape = new THREE.Shape();
+    wingShape.moveTo(0, 0);       
+    wingShape.lineTo(7, 3);     
+    wingShape.lineTo(7, 4.5);       
+    wingShape.lineTo(0, 4.5);     
+    
+    const wGeo = new THREE.ExtrudeGeometry(wingShape, { depth: 0.15, bevelEnabled: false });
+    const rWing = new THREE.Mesh(wGeo, hullMat);
+    rWing.rotation.x = Math.PI / 2; rWing.position.set(1.25, 0, -2.5);
     plane.add(rWing);
     
-    const lWing = new THREE.Mesh(wGeo, tacGrey);
-    lWing.rotation.x = Math.PI / 2;
-    lWing.rotation.z = Math.PI;
-    lWing.position.set(-0.75, 0, -2);
+    const lWing = new THREE.Mesh(wGeo, hullMat);
+    lWing.rotation.x = Math.PI / 2; lWing.rotation.z = Math.PI; lWing.position.set(-1.25, 0, -2.5);
     plane.add(lWing);
 
-    // Slanted Tail Stabilizers
+    // Vertical Stabilizers (V-Tail)
     const tailShape = new THREE.Shape();
-    tailShape.moveTo(0,0); tailShape.lineTo(1.5, 2); tailShape.lineTo(0, 2);
-    const tGeo = new THREE.ExtrudeGeometry(tailShape, { depth: 0.1, bevelEnabled: false });
+    tailShape.moveTo(0,0); tailShape.lineTo(2, 2.5); tailShape.lineTo(0.5, 2.5); tailShape.lineTo(-1, 0);
+    const tGeo = new THREE.ExtrudeGeometry(tailShape, { depth: 0.15, bevelEnabled: false });
     
-    const rTail = new THREE.Mesh(tGeo, tacGrey);
-    rTail.rotation.y = -Math.PI / 2;
-    rTail.rotation.x = -0.3; // Slanted outwards
-    rTail.position.set(0.5, 0.5, 3.5);
+    const rTail = new THREE.Mesh(tGeo, hullMat);
+    rTail.rotation.y = -Math.PI / 2; rTail.rotation.x = -0.35; rTail.position.set(1, 0.5, 4.5);
     plane.add(rTail);
 
-    const lTail = new THREE.Mesh(tGeo, tacGrey);
-    lTail.rotation.y = -Math.PI / 2;
-    lTail.rotation.x = 0.3; // Slanted outwards
-    lTail.position.set(-0.5, 0.5, 3.5);
+    const lTail = new THREE.Mesh(tGeo, hullMat);
+    lTail.rotation.y = -Math.PI / 2; lTail.rotation.x = 0.35; lTail.position.set(-1, 0.5, 4.5);
     plane.add(lTail);
 
-    plane.position.set(0, 2, 500); // Start on runway
+    plane.position.set(0, 3, 500); 
     scene.add(plane);
 
-    // --- Inputs & Controls ---
+    // --- Inputs ---
     const keys = { w: false, a: false, s: false, d: false, space: false };
-    
     window.addEventListener('keydown', (e) => {
         let k = e.key.toLowerCase();
         if (k === ' ') keys.space = true;
@@ -186,24 +229,27 @@
     // --- FX ---
     const particles = [];
     function spawnExplosion(pos) {
-        for(let i=0; i<30; i++) {
-            const m = new THREE.Mesh(new THREE.BoxGeometry(4,4,4), new THREE.MeshBasicMaterial({color: 0xff4400}));
+        for(let i=0; i<40; i++) {
+            const m = new THREE.Mesh(new THREE.BoxGeometry(5,5,5), new THREE.MeshBasicMaterial({color: 0xff4400}));
             m.position.copy(pos);
             scene.add(m);
-            particles.push({ mesh: m, life: 2.0, vel: new THREE.Vector3((Math.random()-0.5)*150, (Math.random()-0.5)*150, (Math.random()-0.5)*150) });
+            particles.push({ mesh: m, life: 2.5, vel: new THREE.Vector3((Math.random()-0.5)*200, (Math.random()-0.5)*200, (Math.random()-0.5)*200) });
         }
     }
 
-    // --- Main Game Loop ---
+    // --- Real Physics Variables ---
     const clock = new THREE.Clock();
-    let speed = 0;
+    let velocity = new THREE.Vector3(0, 0, 0); 
+    let forwardSpeed = 0;
+    const GRAVITY = 80; // Downward force
+    const STALL_SPEED = 180; // Speed required to generate full lift
 
     function resetPlane() {
         isAirborne = false;
-        speed = 0;
-        plane.position.set(0, 2, plane.position.z + 500); // Respawn slightly behind where you died, but center on runway
-        if (plane.position.z < -8000) plane.position.z = 500; // Reset entirely if flown too far
-        plane.position.x = 0;
+        forwardSpeed = 0;
+        velocity.set(0,0,0);
+        // Safely place back on runway
+        plane.position.set(0, 3, plane.position.z > -10000 ? plane.position.z + 500 : 500);
         plane.rotation.set(0,0,0);
     }
 
@@ -212,76 +258,108 @@
         const dt = Math.min(clock.getDelta(), 0.05);
 
         if (isPlaying) {
-            // 1. Acceleration / Ignite
+            // Forward thrust vector based on plane's rotation
+            const planeForward = new THREE.Vector3(0, 0, -1).applyQuaternion(plane.quaternion);
+            const planeUp = new THREE.Vector3(0, 1, 0).applyQuaternion(plane.quaternion);
+
             if (keys.space) {
-                speed += 250 * dt; // VERY fast acceleration
-                // Afterburner visual
-                if (speed > 50) {
-                    const flame = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), new THREE.MeshBasicMaterial({color: 0x00ffff, transparent: true, opacity: 0.8})); // Blue military jet flame
-                    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(plane.quaternion);
-                    flame.position.copy(plane.position).add(forward.multiplyScalar(-4.5));
-                    scene.add(flame);
-                    particles.push({mesh: flame, life: 0.3, vel: new THREE.Vector3(0,0,0)}); // Stationary relative to world
+                forwardSpeed += 300 * dt; // Massive thrust
+                // Twin afterburners
+                if (forwardSpeed > 100) {
+                    const fGeo = new THREE.BoxGeometry(1.2, 1.2, 1.2);
+                    const fMat = new THREE.MeshBasicMaterial({color: 0x00dfff, transparent: true, opacity: 0.7});
+                    
+                    const f1 = new THREE.Mesh(fGeo, fMat);
+                    f1.position.copy(plane.position).add(planeForward.clone().multiplyScalar(-5.5)).add(new THREE.Vector3(0.7,0,0).applyQuaternion(plane.quaternion));
+                    scene.add(f1);
+                    particles.push({mesh: f1, life: 0.2, vel: new THREE.Vector3(0,0,0)});
+                    
+                    const f2 = new THREE.Mesh(fGeo, fMat);
+                    f2.position.copy(plane.position).add(planeForward.clone().multiplyScalar(-5.5)).add(new THREE.Vector3(-0.7,0,0).applyQuaternion(plane.quaternion));
+                    scene.add(f2);
+                    particles.push({mesh: f2, life: 0.2, vel: new THREE.Vector3(0,0,0)});
                 }
             } else {
-                speed *= 0.99; // Air/Ground friction
+                forwardSpeed -= 50 * dt; // Air resistance / Drag
             }
 
-            // 2. Physics & Controls
+            // Cap speeds
+            forwardSpeed = Math.max(0, Math.min(900, forwardSpeed));
+
             if (!isAirborne) {
-                // GROUND STATE
-                speed = Math.max(0, Math.min(300, speed));
-                
-                // Allow A/D to steer slightly on the ground
+                // --- GROUND PHYSICS ---
                 if (keys.a) plane.rotateY(1.0 * dt);
                 if (keys.d) plane.rotateY(-1.0 * dt);
 
-                // Takeoff mechanism: If moving fast and pulling UP (S key)
-                if (speed > 120 && keys.s) {
-                    isAirborne = true;
+                // Prevent tail clipping on rotation: only allow slight pitch up on ground
+                if (keys.s && forwardSpeed > 150) {
+                    plane.rotateX(-1.0 * dt);
+                    // If pitched enough and moving fast, we lift off
+                    if (plane.rotation.x < -0.15 && forwardSpeed > 220) {
+                        isAirborne = true;
+                    }
                 }
                 
-                // Keep plane flush with ground
-                plane.position.y = getTerrainElevation(plane.position.x, plane.position.z) + 2;
-                // Force plane to stay level on ground
+                // Force plane to stay flush, wipe out roll/pitch unless taking off
                 plane.rotation.z = 0; 
-                plane.rotation.x = 0;
+                if(!keys.s) plane.rotation.x = 0;
+                
+                velocity.copy(planeForward).multiplyScalar(forwardSpeed);
+                plane.position.y = getTerrainElevation(plane.position.x, plane.position.z) + 3; // +3 prevents gear/belly clipping
                 
             } else {
-                // FLIGHT STATE
-                speed = Math.max(80, Math.min(800, speed));
-                
-                // Strict WASD rotations (local axes)
-                if (keys.w) plane.rotateX(2.0 * dt);  // Pitch down
-                if (keys.s) plane.rotateX(-2.0 * dt); // Pitch up (pull stick back)
-                if (keys.a) plane.rotateZ(3.0 * dt);  // Roll left
-                if (keys.d) plane.rotateZ(-3.0 * dt); // Roll right
+                // --- AIRBORNE AERODYNAMICS ---
+                // Controls
+                if (keys.w) plane.rotateX(2.0 * dt);  
+                if (keys.s) plane.rotateX(-2.0 * dt); 
+                if (keys.a) plane.rotateZ(3.5 * dt);  
+                if (keys.d) plane.rotateZ(-3.5 * dt); 
 
-                // Lethal Terrain Collision Check!
-                let currentGroundHeight = getTerrainElevation(plane.position.x, plane.position.z);
-                if (plane.position.y <= currentGroundHeight + 1) {
-                    spawnExplosion(plane.position);
-                    resetPlane();
+                // Calculate Lift vs Gravity
+                // If speed is below STALL_SPEED, lift drops off dramatically
+                let liftFactor = Math.min(1.0, forwardSpeed / STALL_SPEED);
+                let currentGravity = new THREE.Vector3(0, -GRAVITY * (1.0 - liftFactor), 0);
+                
+                // Target velocity combines forward thrust and gravity drop
+                let targetVelocity = planeForward.clone().multiplyScalar(forwardSpeed).add(currentGravity);
+
+                // Smoothly lerp actual velocity to target velocity (creates momentum/drift)
+                velocity.lerp(targetVelocity, 3.0 * dt);
+
+                // Check collisions!
+                // We use a safe buffer so the tail swinging down doesn't insta-kill you.
+                let groundHeight = getTerrainElevation(plane.position.x, plane.position.z);
+                if (plane.position.y <= groundHeight + 2) { // 2 unit buffer
+                    // If we are over the runway, and relatively flat, we land.
+                    let isOverRunway = Math.abs(plane.position.x) < 75;
+                    let isLevel = Math.abs(plane.rotation.z) < 0.3 && Math.abs(plane.rotation.x) < 0.3;
+                    
+                    if (isOverRunway && isLevel && forwardSpeed < 400) {
+                        isAirborne = false;
+                        plane.position.y = groundHeight + 3;
+                        plane.rotation.x = 0;
+                        plane.rotation.z = 0;
+                    } else {
+                        // Crashed!
+                        spawnExplosion(plane.position);
+                        resetPlane();
+                    }
                 }
             }
 
-            // Move the plane forward locally (-Z direction)
-            plane.translateZ(-speed * dt);
+            // Apply velocity
+            plane.position.add(velocity.clone().multiplyScalar(dt));
 
-            // 3. Rigid Chase Camera
-            const camOffset = new THREE.Vector3(0, 5, 18).applyQuaternion(plane.quaternion);
-            camera.position.lerp(plane.position.clone().add(camOffset), 12 * dt);
+            // Camera Physics (Dynamic lag based on velocity)
+            const camOffset = new THREE.Vector3(0, 6, 22).applyQuaternion(plane.quaternion);
+            const targetCamPos = plane.position.clone().add(camOffset);
+            camera.position.lerp(targetCamPos, 8 * dt);
             
-            // Screen shake at high speeds
-            if (speed > 400) {
-                camera.position.x += (Math.random() - 0.5) * 0.4;
-                camera.position.y += (Math.random() - 0.5) * 0.4;
-            }
-            
-            const forwardVector = new THREE.Vector3(0, 0, -1).applyQuaternion(plane.quaternion);
-            camera.lookAt(plane.position.clone().add(forwardVector.multiplyScalar(100)));
+            // Look ahead
+            const lookTarget = plane.position.clone().add(velocity.clone().normalize().multiplyScalar(200));
+            camera.lookAt(lookTarget);
 
-            // 4. Update Particles (Flames and Explosions)
+            // Update particles
             for (let i = particles.length - 1; i >= 0; i--) {
                 let p = particles[i];
                 p.life -= dt;
@@ -291,15 +369,13 @@
             }
 
         } else {
-            // Cinematic Menu Camera
-            camera.position.set(100, 30, 600);
+            camera.position.set(150, 50, 650);
             camera.lookAt(0, 10, 0);
         }
 
         renderer.render(scene, camera);
     }
 
-    // Handle Resize
     window.addEventListener('resize', () => {
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
