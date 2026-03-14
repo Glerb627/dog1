@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gritty Flight Combat</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #111; user-select: none; }
+        canvas { display: block; }
+        /* Absolutely no HUD as requested */
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+<script>
+    // --- SCENE SETUP (Gritty & Dark) ---
+    const scene = new THREE.Scene();
+    // Dark, moody fog for a gritty atmosphere
+    scene.background = new THREE.Color(0x1a1a24);
+    scene.fog = new THREE.FogExp2(0x1a1a24, 0.0015);
+
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 5000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    document.body.appendChild(renderer.domElement);
+
+    // --- LIGHTING ---
+    const ambientLight = new THREE.AmbientLight(0x222233, 1.5);
+    scene.add(ambientLight);
+    
+    const directionalLight = new THREE.DirectionalLight(0xffaa55, 1.5); // Low sunset/fire glow
+    directionalLight.position.set(-100, 50, -50);
+    scene.add(directionalLight);
+
+    // --- ENVIRONMENT (Dark Ocean) ---
+    const oceanGeo = new THREE.PlaneGeometry(10000, 10000, 50, 50);
+    const oceanMat = new THREE.MeshStandardMaterial({ 
+        color: 0x050a14, 
+        roughness: 0.1, 
+        metalness: 0.8,
+        flatShading: true 
+    });
+    const ocean = new THREE.Mesh(oceanGeo, oceanMat);
+    ocean.rotation.x = -Math.PI / 2;
+    scene.add(ocean);
+
+    // --- PLAYER SETUP ---
+    // Smooth, angular stealth-like geometry
+    const planeGroup = new THREE.Group();
+    
+    const hullMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.4, metalness: 0.7 });
+    const glassMat = new THREE.MeshStandardMaterial({ color: 0x000000, roughness: 0.1, metalness: 0.9 });
+
+    // Body
+    const bodyGeo = new THREE.BoxGeometry(1, 1, 5);
+    const body = new THREE.Mesh(bodyGeo, hullMat);
+    planeGroup.add(body);
+    
+    // Wings
+    const wingGeo = new THREE.BoxGeometry(6, 0.2, 2);
+    const wings = new THREE.Mesh(wingGeo, hullMat);
+    wings.position.set(0, 0, 0.5);
+    planeGroup.add(wings);
+
+    // Tail
+    const tailGeo = new THREE.BoxGeometry(2, 0.2, 1);
+    const tail = new THREE.Mesh(tailGeo, hullMat);
+    tail.position.set(0, 0, 2);
+    planeGroup.add(tail);
+
+    const finGeo = new THREE.BoxGeometry(0.2, 1.5, 1);
+    const fin = new THREE.Mesh(finGeo, hullMat);
+    fin.position.set(0, 0.75, 2);
+    planeGroup.add(fin);
+
+    // Cockpit
+    const pitGeo = new THREE.BoxGeometry(0.8, 0.6, 1.5);
+    const pit = new THREE.Mesh(pitGeo, glassMat);
+    pit.position.set(0, 0.6, -0.5);
+    planeGroup.add(pit);
+
+    planeGroup.position.set(0, 200, 0);
+    scene.add(planeGroup);
+
+    // --- PHYSICS & CONTROL STATE ---
+    let speed = 150;
+    const maxSpeed = 350;
+    const minSpeed = 50;
+    
+    // Smooth input tracking
+    const input = { pitch: 0, roll: 0 };
+    const targetRotation = new THREE.Euler(0, 0, 0, 'YXZ');
+    const currentRotation = new THREE.Quaternion();
+    
+    const keys = { w: false, s: false, a: false, d: false, space: false, shift: false };
+
+    window.addEventListener('keydown', (e) => {
+        const k = e.key.toLowerCase();
+        if (keys.hasOwnProperty(k)) keys[k] = true;
+        if (e.key === 'Shift') keys.shift = true;
+    });
+    window.addEventListener('keyup', (e) => {
+        const k = e.key.toLowerCase();
+        if (keys.hasOwnProperty(k)) keys[k] = false;
+        if (e.key === 'Shift') keys.shift = false;
+    });
+
+    // --- WEAPONS & FX ---
+    const bullets = [];
+    const particles = [];
+    const enemies = [];
+    let isFiring = false;
+    let lastFireTime = 0;
+
+    window.addEventListener('mousedown', () => isFiring = true);
+    window.addEventListener('mouseup', () => isFiring = false);
+
+    function createExplosion(position) {
+        const geom = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+        const mat = new THREE.MeshBasicMaterial({ color: 0xff4400 });
+        for (let i = 0; i < 30; i++) {
+            const p = new THREE.Mesh(geom, mat);
+            p.position.copy(position);
+            const velocity = new THREE.Vector3(
+                (Math.random() - 0.5) * 50,
+                (Math.random() - 0.5) * 50,
+                (Math.random() - 0.5) * 50
+            );
+            scene.add(p);
+            particles.push({ mesh: p, velocity: velocity, life: 1.0 });
+        }
+    }
+
+    // --- ENEMY SETUP ---
+    function spawnEnemy() {
+        const enemy = new THREE.Group();
+        
+        // Simple enemy geometry (Drone-like)
+        const eBody = new THREE.Mesh(new THREE.BoxGeometry(2, 0.5, 3), new THREE.MeshStandardMaterial({color: 0x440000, metalness: 0.8}));
+        enemy.add(eBody);
+        
+        enemy.position.set(
+            planeGroup.position.x + (Math.random() - 0.5) * 2000,
+            Math.random() * 400 + 100,
+            planeGroup.position.z - 1000 - Math.random() * 2000
+        );
+        
+        scene.add(enemy);
+        enemies.push({ mesh: enemy, hp: 3, speed: 120 });
+    }
+
+    // Initial enemies
+    for(let i=0; i<5; i++) spawnEnemy();
+
+    // --- MAIN LOOP ---
+    const clock = new THREE.Clock();
+    
+    function animate() {
+        requestAnimationFrame(animate);
+        const dt = Math.min(clock.getDelta(), 0.1);
+
+        // 1. Player Controls & Physics (Smooth Arcade Model)
+        // Pitch mapping
+        if (keys.w) input.pitch = 1.5;
+        else if (keys.s) input.pitch = -1.5;
+        else input.pitch = 0;
+
+        // Roll mapping
+        if (keys.a) input.roll = 2.0;
+        else if (keys.d) input.roll = -2.0;
+        else input.roll = 0;
+
+        // Throttle
+        if (keys.space) speed += 100 * dt;
+        if (keys.shift) speed -= 100 * dt;
+        speed = Math.max(minSpeed, Math.min(maxSpeed, speed));
+
+        // Apply rotation relatively based on current forward vector
+        planeGroup.rotateZ(input.roll * dt);
+        planeGroup.rotateX(input.pitch * dt);
+        
+        // Auto-leveling slightly to prevent wonky death-spirals
+        if (!keys.a && !keys.d) {
+            const zRot = planeGroup.rotation.z;
+            planeGroup.rotation.z -= zRot * 2 * dt; 
+        }
+
+        // Move plane forward
+        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(planeGroup.quaternion);
+        planeGroup.position.add(forward.clone().multiplyScalar(speed * dt));
+
+        // Hard floor constraint
+        if (planeGroup.position.y < 2) planeGroup.position.y = 2;
+
+        // 2. Camera Physics (Stiff Chase Cam)
+        const camOffset = new THREE.Vector3(0, 3, 12).applyQuaternion(planeGroup.quaternion);
+        const targetCamPos = planeGroup.position.clone().add(camOffset);
+        camera.position.lerp(targetCamPos, 10 * dt);
+        
+        const lookAhead = planeGroup.position.clone().add(forward.clone().multiplyScalar(50));
+        camera.lookAt(lookAhead);
+
+        // 3. Weapons
+        if (isFiring && clock.elapsedTime - lastFireTime > 0.1) {
+            const bulletGeo = new THREE.BoxGeometry(0.1, 0.1, 4);
+            const bulletMat = new THREE.MeshBasicMaterial({ color: 0xffdd44 });
+            const bullet = new THREE.Mesh(bulletGeo, bulletMat);
+            
+            bullet.position.copy(planeGroup.position).add(forward.clone().multiplyScalar(3));
+            bullet.quaternion.copy(planeGroup.quaternion);
+            
+            scene.add(bullet);
+            bullets.push({ mesh: bullet, velocity: forward.clone().multiplyScalar(1000), life: 2.0 });
+            lastFireTime = clock.elapsedTime;
+        }
+
+        for (let i = bullets.length - 1; i >= 0; i--) {
+            let b = bullets[i];
+            b.mesh.position.add(b.velocity.clone().multiplyScalar(dt));
+            b.life -= dt;
+
+            // Collision with enemies
+            let hit = false;
+            for (let j = enemies.length - 1; j >= 0; j--) {
+                let e = enemies[j];
+                if (b.mesh.position.distanceTo(e.mesh.position) < 5) {
+                    e.hp--;
+                    hit = true;
+                    if (e.hp <= 0) {
+                        createExplosion(e.mesh.position);
+                        scene.remove(e.mesh);
+                        enemies.splice(j, 1);
+                        spawnEnemy(); // Keep the fight going
+                    }
+                    break;
+                }
+            }
+
+            if (hit || b.life <= 0) {
+                scene.remove(b.mesh);
+                bullets.splice(i, 1);
+            }
+        }
+
+        // 4. Enemy AI Update
+        for (let e of enemies) {
+            // Very simple AI: Always turn towards player and fly forward
+            const toPlayer = planeGroup.position.clone().sub(e.mesh.position).normalize();
+            
+            // Look at player smoothly
+            const targetRot = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,-1), toPlayer);
+            e.mesh.quaternion.slerp(targetRot, 2 * dt);
+            
+            // Move forward
+            const eForward = new THREE.Vector3(0, 0, -1).applyQuaternion(e.mesh.quaternion);
+            e.mesh.position.add(eForward.multiplyScalar(e.speed * dt));
+        }
+
+        // 5. FX Update
+        for (let i = particles.length - 1; i >= 0; i--) {
+            let p = particles[i];
+            p.mesh.position.add(p.velocity.clone().multiplyScalar(dt));
+            p.life -= dt * 2;
+            p.mesh.scale.setScalar(Math.max(0, p.life));
+            if (p.life <= 0) {
+                scene.remove(p.mesh);
+                particles.splice(i, 1);
+            }
+        }
+
+        renderer.render(scene, camera);
+    }
+
+    // Handle resize
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    animate();
+</script>
+</body>
+</html>
